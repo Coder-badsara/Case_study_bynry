@@ -1,0 +1,13 @@
+Part - 02
+
+Gaps to raise with the product team
+
+When inventory moves between two warehouses, should that be one event or two separate transfer_out / transfer_in log rows?
+
+Should negative stock ever be permitted (backorders), or is the CHECK (quantity >= 0) always correct?
+
+When a bundle is sold, does inventory deduct from each component separately, or does the bundle itself hold stock?
+
+Who controls the product catalog — the platform, or each company individually?
+
+Should each warehouse have its own staff, or do company-level roles apply across all warehouses?

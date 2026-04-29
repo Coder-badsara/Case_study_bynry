@@ -1,0 +1,15 @@
+# Key assumptions 
+
+# ASSUMPTION 1: "recent sales activity" window = 30 days (RECENT_SALES_DAYS).
+#   Change this constant if the business defines it differently.
+
+# ASSUMPTION 2: days_until_stockout uses avg daily sales over the same 30-day
+#   window. A more accurate model would use weighted recent averages or
+#   a time-series forecast — raise with the product team.
+
+# ASSUMPTION 3: only one supplier is returned per alert (the preferred one).
+#   If the product team wants all linked suppliers, change _get_preferred_supplier
+#   to return a list.
+
+# ASSUMPTION 4: bundles are excluded. A bundle's stock depends on its components,
+#   so a separate bundle-depletion alert would need different logic.

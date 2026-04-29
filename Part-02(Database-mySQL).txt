@@ -1,0 +1,133 @@
+MySQL -->
+
+
+CREATE TABLE companies (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(255)        NOT NULL,
+    email       VARCHAR(255)        UNIQUE,
+    phone       VARCHAR(30),
+    address     TEXT,
+    created_at  TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP           DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE warehouses (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    company_id  BIGINT UNSIGNED     NOT NULL,
+    name        VARCHAR(255)        NOT NULL,
+    address     TEXT,
+    capacity    INT UNSIGNED,           -- nullable: not all warehouses track capacity
+    created_at  TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_wh_company FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+CREATE TABLE users (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    company_id  BIGINT UNSIGNED     NOT NULL,
+    name        VARCHAR(255)        NOT NULL,
+    email       VARCHAR(255)        NOT NULL UNIQUE,
+    role        ENUM('admin','manager','staff') NOT NULL DEFAULT 'staff',
+    created_at  TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user_company FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+
+
+CREATE TABLE products (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    sku         VARCHAR(100)        NOT NULL UNIQUE,
+    name        VARCHAR(255)        NOT NULL,
+    description TEXT,
+    unit_price  DECIMAL(12, 2)      NOT NULL DEFAULT 0.00,
+    is_bundle   TINYINT(1)          NOT NULL DEFAULT 0,
+    is_active   TINYINT(1)          NOT NULL DEFAULT 1,
+    created_at  TIMESTAMP           DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_sku (sku),
+    INDEX idx_active (is_active)
+);
+
+-- Self-referential join for bundles
+-- bundle_product_id  → the parent bundle
+-- component_product_id → an item inside that bundle
+CREATE TABLE product_bundles (
+    id                   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    bundle_product_id    BIGINT UNSIGNED NOT NULL,
+    component_product_id BIGINT UNSIGNED NOT NULL,
+    quantity             INT UNSIGNED    NOT NULL DEFAULT 1,
+    UNIQUE KEY uq_bundle_component (bundle_product_id, component_product_id),
+    CONSTRAINT fk_pb_bundle    FOREIGN KEY (bundle_product_id)    REFERENCES products(id),
+    CONSTRAINT fk_pb_component FOREIGN KEY (component_product_id) REFERENCES products(id),
+    CHECK (bundle_product_id <> component_product_id)  -- prevent self-reference
+);
+
+
+CREATE TABLE inventory (
+    id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    product_id    BIGINT UNSIGNED NOT NULL,
+    warehouse_id  BIGINT UNSIGNED NOT NULL,
+    quantity      INT             NOT NULL DEFAULT 0,
+    min_threshold INT UNSIGNED,     -- reorder alert level; nullable if not configured
+    updated_at    TIMESTAMP       DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_product_warehouse (product_id, warehouse_id),   -- one row per location
+    CONSTRAINT fk_inv_product   FOREIGN KEY (product_id)   REFERENCES products(id),
+    CONSTRAINT fk_inv_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),
+    CHECK (quantity >= 0)           -- prevent accidental negative stock
+);
+
+-- Append-only audit log; never updated, only inserted
+
+CREATE TABLE inventory_logs (
+    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    inventory_id     BIGINT UNSIGNED NOT NULL,
+    changed_by       BIGINT UNSIGNED,         -- NULL if system/automated
+    change_type      ENUM('receipt','sale','adjustment','transfer_in','transfer_out','return') NOT NULL,
+    quantity_before  INT             NOT NULL,
+    quantity_after   INT             NOT NULL,
+    -- delta is derived (after - before) but stored for fast reporting
+    delta            INT GENERATED ALWAYS AS (quantity_after - quantity_before) STORED,
+    reason           VARCHAR(500),
+    reference_id     VARCHAR(100),            -- e.g. PO number, order ID, transfer ID
+    created_at       TIMESTAMP       DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_log_inventory (inventory_id),
+    INDEX idx_log_created   (created_at),
+    CONSTRAINT fk_log_inventory FOREIGN KEY (inventory_id) REFERENCES inventory(id),
+    CONSTRAINT fk_log_user      FOREIGN KEY (changed_by)   REFERENCES users(id)
+);
+
+
+CREATE TABLE suppliers (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(255)    NOT NULL,
+    email       VARCHAR(255),
+    phone       VARCHAR(30),
+    address     TEXT,
+    created_at  TIMESTAMP       DEFAULT CURRENT_TIMESTAMP
+);
+
+-- A supplier can work with many companies; a company can use many suppliers
+
+CREATE TABLE company_suppliers (
+    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    company_id      BIGINT UNSIGNED NOT NULL,
+    supplier_id     BIGINT UNSIGNED NOT NULL,
+    contract_start  DATE,
+    contract_end    DATE,           -- NULL = open-ended contract
+    status          ENUM('active','inactive','pending') NOT NULL DEFAULT 'active',
+    UNIQUE KEY uq_company_supplier (company_id, supplier_id),
+    CONSTRAINT fk_cs_company  FOREIGN KEY (company_id)  REFERENCES companies(id),
+    CONSTRAINT fk_cs_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+-- Which supplier can provide which product, and at what cost
+
+CREATE TABLE supplier_products (
+    id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    supplier_id     BIGINT UNSIGNED NOT NULL,
+    product_id      BIGINT UNSIGNED NOT NULL,
+    cost_price      DECIMAL(12, 2)  NOT NULL,
+    lead_time_days  SMALLINT UNSIGNED,
+    is_preferred    TINYINT(1)      NOT NULL DEFAULT 0,  -- preferred supplier for this product
+    UNIQUE KEY uq_supplier_product (supplier_id, product_id),
+    CONSTRAINT fk_sp_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+    CONSTRAINT fk_sp_product  FOREIGN KEY (product_id)  REFERENCES products(id)
+);
