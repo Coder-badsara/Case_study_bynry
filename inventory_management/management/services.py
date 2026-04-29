@@ -4,25 +4,13 @@ from datetime import timedelta
 
 from .models import Inventory, InventoryLog, SupplierProduct
 
-
-# ── Assumption: "recent sales activity" = at least 1 sale in the last 30 days.
-# ── Assumption: days_until_stockout = current_stock / avg_daily_sales (last 30d).
-#    Returns None if there are no recent sales (can't project without velocity).
-# ── Assumption: preferred supplier is returned; if none is preferred, the first
-#    supplier by id is returned. None if no supplier is linked.
-
 RECENT_SALES_DAYS = 30
 
 
 def get_low_stock_alerts(company_id: int) -> list[dict]:
-    """
-    Returns all low-stock inventory rows for a given company where:
-      1. quantity <= min_threshold  (threshold is set on the inventory row)
-      2. the product had at least one 'sale' log in the last RECENT_SALES_DAYS days
-    """
     cutoff = timezone.now() - timedelta(days=RECENT_SALES_DAYS)
 
-    # ── Step 1: find inventory IDs with recent sale activity ──────────────────
+    # find inventory IDs with recent sale activity
     active_inventory_ids = (
         InventoryLog.objects
         .filter(
@@ -33,7 +21,7 @@ def get_low_stock_alerts(company_id: int) -> list[dict]:
         .distinct()
     )
 
-    # ── Step 2: fetch low-stock rows for this company ─────────────────────────
+    # fetch low-stock rows for this company
     low_stock_qs = (
         Inventory.objects
         .select_related(
@@ -46,11 +34,10 @@ def get_low_stock_alerts(company_id: int) -> list[dict]:
             id__in=active_inventory_ids,
         )
         .filter(
-            # Only rows where threshold is configured AND stock is at/below it
             min_threshold__isnull=False,
             quantity__lte=models_ref("min_threshold"),
         )
-        .order_by("quantity")          # most critical first
+        .order_by("quantity")        
     )
 
     results = []
@@ -71,10 +58,6 @@ def get_low_stock_alerts(company_id: int) -> list[dict]:
 
 
 def _calc_days_until_stockout(inv: "Inventory", cutoff) -> int | None:
-    """
-    Estimate days until stockout based on average daily sales in the last 30 days.
-    Returns None when there is insufficient sales data to project.
-    """
     logs = (
         InventoryLog.objects
         .filter(
@@ -84,11 +67,9 @@ def _calc_days_until_stockout(inv: "Inventory", cutoff) -> int | None:
         )
     )
 
-    # Sum all units sold in the window
     total_sold = sum(abs(log.delta) for log in logs)
 
     if total_sold == 0:
-        # No sales data — cannot compute velocity
         return None
 
     avg_daily = total_sold / RECENT_SALES_DAYS
@@ -96,22 +77,13 @@ def _calc_days_until_stockout(inv: "Inventory", cutoff) -> int | None:
     if avg_daily <= 0:
         return None
 
-    # Round up so we never underestimate urgency
-    import math
-    return math.ceil(inv.quantity / avg_daily)
-
-
 def _get_preferred_supplier(product_id: int) -> dict | None:
-    """
-    Returns the preferred supplier for a product.
-    Falls back to the first linked supplier if none is marked preferred.
-    Returns None if no supplier is linked at all.
-    """
+
     supplier_product = (
         SupplierProduct.objects
         .select_related("supplier")
         .filter(product_id=product_id)
-        .order_by("-is_preferred", "id")   # preferred first, then oldest link
+        .order_by("-is_preferred", "id")
         .first()
     )
 
@@ -125,7 +97,6 @@ def _get_preferred_supplier(product_id: int) -> dict | None:
     }
 
 
-# ── Helper used inline to reference a model field in a filter ─────────────────
 from django.db.models import F
 
 def models_ref(field: str):
